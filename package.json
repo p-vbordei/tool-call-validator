@@ -1,6 +1,6 @@
 {
   "name": "tool-call-validator",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Parse and validate LLM tool-call JSON payloads. Loose JSON parsing (repairs common LLM mistakes) + JSON-Schema-subset validation. Zero dependencies.",
   "keywords": [
     "llm",
