@@ -1,24 +1,74 @@
 {
   "name": "tool-call-validator",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Parse and validate LLM tool-call JSON payloads. Loose JSON parsing (repairs common LLM mistakes) + JSON-Schema-subset validation. Zero dependencies.",
-  "keywords": ["llm", "tool-call", "function-calling", "json-schema", "json", "repair"],
+  "keywords": [
+    "llm",
+    "tool-call",
+    "function-calling",
+    "json-schema",
+    "json",
+    "repair"
+  ],
   "type": "module",
-  "main": "./dist/index.js",
+  "main": "./dist/index.cjs",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
-  "files": ["dist", "README.md", "LICENSE"],
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run typecheck && npm run build",
+    "typecheck": "tsc --noEmit",
+    "test:coverage": "vitest run --coverage",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\""
   },
-  "engines": { "node": ">=20" },
-  "author": { "name": "Vlad Bordei", "email": "bordeivlad@gmail.com", "url": "https://github.com/p-vbordei" },
+  "engines": {
+    "node": ">=20",
+    "npm": ">=8"
+  },
+  "author": {
+    "name": "Vlad Bordei",
+    "email": "bordeivlad@gmail.com",
+    "url": "https://github.com/p-vbordei"
+  },
   "license": "Apache-2.0",
-  "repository": { "type": "git", "url": "https://github.com/p-vbordei/tool-call-validator.git" },
-  "bugs": { "url": "https://github.com/p-vbordei/tool-call-validator/issues" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/p-vbordei/tool-call-validator.git"
+  },
+  "bugs": {
+    "url": "https://github.com/p-vbordei/tool-call-validator/issues"
+  },
   "homepage": "https://github.com/p-vbordei/tool-call-validator#readme",
-  "devDependencies": { "typescript": "^5.5.0", "vitest": "^2.0.0" }
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0",
+    "tsup": "^8.0.0",
+    "@vitest/coverage-v8": "^2.1.9",
+    "prettier": "^3.3.0"
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "module": "./dist/index.mjs"
 }

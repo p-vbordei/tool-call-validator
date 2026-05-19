@@ -2,6 +2,10 @@
 
 [![ci](https://github.com/p-vbordei/tool-call-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/p-vbordei/tool-call-validator/actions/workflows/ci.yml)
 
+[![npm](https://img.shields.io/npm/v/tool-call-validator.svg)](https://www.npmjs.com/package/tool-call-validator)
+[![downloads](https://img.shields.io/npm/dm/tool-call-validator.svg)](https://www.npmjs.com/package/tool-call-validator)
+[![bundle](https://img.shields.io/bundlejs/size/tool-call-validator)](https://bundlejs.com/?q=tool-call-validator)
+
 Parse and validate JSON tool-call payloads from LLMs. **Lenient parsing** (repairs common LLM mistakes: trailing commas, single quotes, code fences, unquoted keys) + **JSON-Schema-subset** validation. Zero dependencies.
 
 ```ts
