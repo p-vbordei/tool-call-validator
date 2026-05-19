@@ -1,5 +1,7 @@
 # tool-call-validator
 
+[![ci](https://github.com/p-vbordei/tool-call-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/p-vbordei/tool-call-validator/actions/workflows/ci.yml)
+
 Parse and validate JSON tool-call payloads from LLMs. **Lenient parsing** (repairs common LLM mistakes: trailing commas, single quotes, code fences, unquoted keys) + **JSON-Schema-subset** validation. Zero dependencies.
 
 ```ts
