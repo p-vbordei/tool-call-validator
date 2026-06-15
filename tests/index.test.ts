@@ -1,11 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import {
   extractJson,
   repairJson,
   parseJsonLoose,
   validate,
   parseAndValidate,
-} from "../src/index.js";
+  SchemaError,
+} from "../src/index";
 
 describe("extractJson", () => {
   it("returns input unchanged when already JSON", () => {
@@ -93,10 +94,15 @@ describe("validate: object", () => {
   it("accepts valid", () => {
     expect(validate({ name: "Vlad", age: 30 }, schema).valid).toBe(true);
   });
-  it("requires required field", () => {
+  it("requires required field → {valid:false, errors}", () => {
     const r = validate({ age: 30 }, schema);
     expect(r.valid).toBe(false);
     if (!r.valid) expect(r.errors[0]!.path).toBe("name");
+  });
+  it("reports a wrong-type field → {valid:false, errors}", () => {
+    const r = validate({ name: 123 }, schema);
+    expect(r.valid).toBe(false);
+    if (!r.valid) expect(r.errors.some((e) => e.path === "name" && e.message.includes("expected string"))).toBe(true);
   });
   it("validates nested fields", () => {
     const r = validate({ name: "", age: -1 }, schema);
@@ -140,6 +146,29 @@ describe("validate: string constraints", () => {
   });
 });
 
+describe("validate: malformed schema throws (usage error, not a verdict)", () => {
+  it("throws on a non-object schema", () => {
+    // @ts-expect-error — deliberately bad usage
+    expect(() => validate({ a: 1 }, null)).toThrow(SchemaError);
+    // @ts-expect-error — deliberately bad usage
+    expect(() => validate({ a: 1 }, "string")).toThrow(SchemaError);
+  });
+  it("throws on an unknown type keyword", () => {
+    // @ts-expect-error — "frobnicate" is not a valid type
+    expect(() => validate({}, { type: "frobnicate" })).toThrow(SchemaError);
+  });
+  it("throws on a malformed nested property schema", () => {
+    expect(() =>
+      // @ts-expect-error — nested schema is not an object
+      validate({ a: 1 }, { type: "object", properties: { a: 7 } }),
+    ).toThrow(SchemaError);
+  });
+  it("throws when 'required' is not an array", () => {
+    // @ts-expect-error — required must be an array
+    expect(() => validate({}, { type: "object", required: "name" })).toThrow(SchemaError);
+  });
+});
+
 describe("parseAndValidate", () => {
   it("end-to-end on a clean tool call", () => {
     const schema = {
@@ -167,9 +196,28 @@ describe("parseAndValidate", () => {
     if (r.valid) expect(r.value).toEqual({ name: "Vlad" });
   });
 
-  it("reports parse failure", () => {
-    const r = parseAndValidate("definitely not json", { type: "object" });
+  it("parses-but-non-conforming → {valid:false, errors} (verdict, not throw)", () => {
+    const schema = {
+      type: "object" as const,
+      properties: { name: { type: "string" as const } },
+      required: ["name"],
+    };
+    const r = parseAndValidate('{"name": 42}', schema);
     expect(r.valid).toBe(false);
-    if (!r.valid) expect(r.errors[0]!.message).toContain("parse");
+    if (!r.valid) expect(r.errors.some((e) => e.path === "name")).toBe(true);
+  });
+
+  it("throws SchemaError on unparseable JSON input", () => {
+    expect(() => parseAndValidate("definitely not json", { type: "object" })).toThrow(SchemaError);
+  });
+
+  it("throws SchemaError on a non-string argument payload", () => {
+    // @ts-expect-error — input must be a string
+    expect(() => parseAndValidate({ already: "parsed" }, { type: "object" })).toThrow(SchemaError);
+  });
+
+  it("throws SchemaError on a malformed schema before parsing", () => {
+    // @ts-expect-error — bad schema
+    expect(() => parseAndValidate('{"a":1}', { type: "nope" })).toThrow(SchemaError);
   });
 });

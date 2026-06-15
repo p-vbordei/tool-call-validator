@@ -1,105 +1,87 @@
 # tool-call-validator
 
-[![ci](https://github.com/p-vbordei/tool-call-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/p-vbordei/tool-call-validator/actions/workflows/ci.yml)
+<p align="center"><img src="docs/hero.svg" alt="tool-call-validator — validate LLM tool-call arguments against a JSON-Schema subset" width="100%"></p>
 
-[![npm](https://img.shields.io/npm/v/tool-call-validator.svg)](https://www.npmjs.com/package/tool-call-validator)
-[![downloads](https://img.shields.io/npm/dm/tool-call-validator.svg)](https://www.npmjs.com/package/tool-call-validator)
-[![bundle](https://img.shields.io/bundlejs/size/tool-call-validator)](https://bundlejs.com/?q=tool-call-validator)
+*Validate an LLM tool/function call's JSON arguments against the tool's declared JSON-Schema-subset; throws on malformed schema or input.*
 
-> Parse and validate JSON tool-call payloads from LLMs. Lenient parsing (repairs common LLM mistakes: trailing commas, single quotes, code fences, unquoted keys) + JSON-Schema-subset validation. Zero dependencies.
+[![family](https://img.shields.io/badge/family-lib-success)](../INDEX.md)
+[![deps](https://img.shields.io/badge/dependencies-0-blue)](./package.json)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
 
-```ts
-import { parseAndValidate } from "tool-call-validator";
+## Overview
 
-const schema = {
-  type: "object",
-  properties: {
-    location: { type: "string" },
-    units: { enum: ["c", "f"] },
-  },
-  required: ["location"],
-} as const;
+When an LLM emits a tool/function call, you get a tool **name** and a JSON
+**arguments** payload — and the JSON quality is variable (trailing commas,
+single-quoted strings, unquoted keys, wrapped in ` ```json … ``` `, prose
+around it, smart quotes). Before you hand those arguments to the tool you want
+to know two things: did it parse, and does it match the tool's declared
+parameter schema?
 
-// Even when the model returns this nonsense:
-const ugly = "Sure! Here:\n```json\n{ location: 'Bucharest', units: 'c', }\n```";
+`tool-call-validator` is a small, **zero-dependency** library that does exactly
+this, in two layers:
 
-const r = parseAndValidate(ugly, schema);
-if (r.valid) {
-  callWeatherTool(r.value);
-} else {
-  for (const e of r.errors) console.warn(`${e.path}: ${e.message}`);
-}
-```
+1. **Lenient parse** (`parseJsonLoose`) — tries strict `JSON.parse`, then
+   extracts the first JSON object/array from surrounding prose, then repairs
+   common LLM mistakes.
+2. **Schema validation** (`validate`) — checks a parsed value against a
+   **JSON-Schema subset** and returns a path-tagged verdict.
 
-## Install
+`parseAndValidate` chains both: pass the raw model output + the tool's schema,
+get back a validated typed value or a structured error report.
+
+The schema subset covers `type`
+(`string`/`number`/`integer`/`boolean`/`object`/`array`/`null`, with `integer`
+distinct from `number`), `properties`, `required`, `items`, `enum`,
+`minimum`/`maximum`, `minLength`/`maxLength`, `pattern`, and
+`additionalProperties: false`. Deliberately **out of scope**:
+`oneOf`/`anyOf`/`allOf`, `$ref`, `format`, custom keywords — for a full JSON
+Schema engine use Ajv; for *just enough* to pin down LLM outputs, this is enough.
+
+The library is **pure and deterministic**: no network, no filesystem, no clock,
+no randomness — so there are **no seams, no fakes, and no live-check**.
+Everything runs offline.
+
+**Validation verdict vs. throw.** A *failed validation* — missing required
+field, wrong type, unknown property — is a **verdict** (`{ valid: false,
+errors }`), the correct, expected result. A genuine *usage error* — a malformed
+schema, a non-string argument payload, or input that cannot be parsed even
+after repair — **throws** `SchemaError`. The library never silent-empties on
+bad input.
+
+## Usage
+
+Runs on [Bun](https://bun.sh) directly from source — no build step.
 
 ```sh
-npm install tool-call-validator
+bun test          # the suite (pure functions — deterministic, offline)
+bunx tsc --noEmit # typecheck
 ```
 
-Works with Node 20+, browsers, Bun, Deno. ESM + CJS.
-
-## Why
-
-When an LLM returns a tool call, the JSON quality is variable:
-
-- Trailing commas
-- Single-quoted strings
-- Unquoted keys
-- Wrapped in ` ```json ... ``` `
-- Prose around the JSON ("Here's the result: {...}")
-- Smart quotes copy-pasted from elsewhere
-
-A strict `JSON.parse` rejects all of these. You're stuck either retrying with a stricter prompt (slow, expensive) or doing one-off cleanup per call. `tool-call-validator` does both halves:
-
-1. **Lenient parsing** — tries strict first, then extracts JSON from prose, then applies repairs.
-2. **Schema validation** — JSON-Schema subset with helpful path-based errors.
-
-Together: pass the raw model output, get a validated typed object or a structured error report.
-
-## Recipes
-
-### Full LLM tool-call loop
+### A valid tool call passes
 
 ```ts
 import { parseAndValidate, type Schema } from "tool-call-validator";
 
-const tools = {
-  get_weather: {
-    schema: {
-      type: "object",
-      properties: { location: { type: "string" }, units: { enum: ["c", "f"] } },
-      required: ["location"],
-    } as const satisfies Schema,
-    execute: async (args) => fetchWeather(args.location, args.units),
+const getWeather = {
+  type: "object",
+  properties: {
+    location: { type: "string", minLength: 1 },
+    units: { enum: ["c", "f"] },
   },
-};
+  required: ["location"],
+} as const satisfies Schema;
 
-async function callTool(name: string, rawArgs: string) {
-  const tool = tools[name];
-  if (!tool) throw new Error(`unknown tool: ${name}`);
+// Even when the model wraps the JSON in prose, a fence, and bad quoting:
+const raw = "Sure! Here:\n```json\n{ location: 'Bucharest', units: 'c', }\n```";
 
-  const v = parseAndValidate(rawArgs, tool.schema);
-  if (!v.valid) {
-    // Feed errors back to the LLM for a retry
-    return { error: "validation failed", details: v.errors };
-  }
-  return await tool.execute(v.value);
+const r = parseAndValidate(raw, getWeather);
+if (r.valid) {
+  // r.value === { location: "Bucharest", units: "c" }
+  // callWeatherTool(r.value)
 }
 ```
 
-### Just parse, validate elsewhere
-
-```ts
-import { parseJsonLoose } from "tool-call-validator";
-
-const parsed = parseJsonLoose(modelOutput);
-if (parsed === null) throw new Error("couldn't extract JSON");
-
-// Validate with your own logic / Zod / Ajv
-```
-
-### Strict mode — reject unknown keys
+### An invalid call → `{ valid: false, errors }` (a verdict, not a throw)
 
 ```ts
 import { parseAndValidate } from "tool-call-validator";
@@ -108,79 +90,45 @@ const schema = {
   type: "object",
   properties: { id: { type: "integer" } },
   required: ["id"],
-  additionalProperties: false,  // reject anything not listed
+  additionalProperties: false, // reject unknown keys
 } as const;
 
-const r = parseAndValidate('{"id": 1, "extra": "hi"}', schema);
-// → valid: false, errors include "unknown property"
-```
-
-### Path-based error reporting back to the LLM
-
-```ts
-import { parseAndValidate } from "tool-call-validator";
-
-const r = parseAndValidate(rawArgs, schema);
+const r = parseAndValidate('{"name": "oops", "extra": 1}', schema);
+// r.valid === false
+// r.errors includes  { path: "id", message: "required" }
+//               and  { path: "extra", message: "unknown property" }
 if (!r.valid) {
-  const errorMsg = r.errors.map((e) => `${e.path}: ${e.message}`).join("\n");
-  conversation.push({ role: "tool", content: `Validation failed:\n${errorMsg}` });
+  // Feed the path-tagged errors back to the LLM for a retry:
+  const feedback = r.errors.map((e) => `${e.path}: ${e.message}`).join("\n");
 }
 ```
 
-## API
-
-### Parsing helpers
-
-| Function | What |
-|---|---|
-| `extractJson(text)` | Pull out the first JSON object/array from prose or code fences |
-| `repairJson(text)` | Apply common fixes (trailing commas, unquoted keys, smart quotes, comments, single→double quotes) |
-| `parseJsonLoose(text)` | Try strict, then extract, then repair. Returns `unknown` or `null` |
-
-### Validation
+### A malformed schema / unparseable input throws
 
 ```ts
-type Schema = {
-  type?: "string" | "number" | "integer" | "boolean" | "object" | "array" | "null";
-  properties?: Record<string, Schema>;
-  required?: string[];
-  items?: Schema;
-  enum?: unknown[];
-  minimum?: number;
-  maximum?: number;
-  minLength?: number;
-  maxLength?: number;
-  pattern?: string;
-  additionalProperties?: boolean;  // false to reject unknown keys
-};
+import { parseAndValidate, validate, SchemaError } from "tool-call-validator";
 
-validate(value, schema) → { valid: true, value } | { valid: false, errors: [{ path, message }] }
-parseAndValidate(text, schema) → same shape, but parses the text first
+// 1) A malformed schema is a usage error, not a passing validation:
+try {
+  // @ts-expect-error — "frobnicate" is not a valid type
+  validate({ a: 1 }, { type: "frobnicate" });
+} catch (err) {
+  console.log(err instanceof SchemaError); // true
+}
+
+// 2) Arguments that cannot be parsed even after lenient repair throw too:
+try {
+  parseAndValidate("this is definitely not json", { type: "object" });
+} catch (err) {
+  console.log(err instanceof SchemaError); // true — surfaced, not swallowed
+}
 ```
 
-## What repair does
+## Part of the Cube Platform
 
-| Input | Output |
-|---|---|
-| ` ```json\n{...}\n``` ` | JSON unwrapped |
-| `{a: 1}` | `{"a": 1}` |
-| `{"a": 1,}` | `{"a": 1}` |
-| `{'a': 'b'}` | `{"a": "b"}` |
-| `{"a": 1} // comment` | `{"a": 1}` |
-| `{"a": "b"}` (smart quotes) | `{"a": "b"}` |
-| `Here's the JSON: {...}` | JSON extracted from prose |
+A `lib`-family cube — a zero-dep tool-call validation micro-library. See the
+workspace [INDEX.md](../INDEX.md) for sibling cubes.
 
-## Not in scope
+---
 
-Deliberate omissions — this is a tool-call validator, not a full JSON Schema engine:
-
-- `oneOf` / `anyOf` / `allOf`
-- `$ref` / definitions
-- `format` (date-time, email, etc.) — use `pattern` instead
-- Custom keywords
-
-For full JSON Schema, use Ajv. For *just enough* to pin down LLM outputs, this is enough.
-
-## License
-
-Apache-2.0 © Vlad Bordei
+Apache-2.0 · Vlad Bordei &lt;vlad@vollko.com&gt; · https://github.com/p-vbordei

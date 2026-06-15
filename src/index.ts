@@ -1,3 +1,13 @@
+/**
+ * tool-call-validator — validate an LLM tool/function call's JSON arguments
+ * against the tool's declared JSON-Schema-subset, returning a structured
+ * valid/invalid verdict; throws on a malformed schema or unparseable input.
+ *
+ * Pure, deterministic, zero-dependency. No I/O, no clock, no randomness — so
+ * there is no seam and no `Fake<X>`.
+ */
+
+/** The JSON-Schema subset this validator understands. */
 export interface Schema {
   type?: "string" | "number" | "integer" | "boolean" | "object" | "array" | "null";
   properties?: Record<string, Schema>;
@@ -21,6 +31,76 @@ export interface ValidationError {
 export type ValidationResult<T = unknown> =
   | { valid: true; value: T }
   | { valid: false; errors: ValidationError[] };
+
+/**
+ * Thrown when the caller misuses the API: a malformed/invalid schema, a
+ * non-string argument payload, or an unparseable JSON argument string. This is
+ * distinct from a *validation verdict* (`{ valid: false, errors }`), which is
+ * the correct, expected outcome for a well-formed but non-conforming tool call.
+ */
+export class SchemaError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SchemaError";
+  }
+}
+
+const VALID_TYPES = new Set([
+  "string",
+  "number",
+  "integer",
+  "boolean",
+  "object",
+  "array",
+  "null",
+]);
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Validate that `schema` is a well-formed Schema in this subset. Throws
+ * `SchemaError` on anything malformed (not an object, unknown `type`, wrong
+ * shape for a keyword). A malformed schema is a *usage error*, never a
+ * silently-passing validation.
+ */
+function assertSchema(schema: unknown, where: string): asserts schema is Schema {
+  if (!isPlainObject(schema)) {
+    throw new SchemaError(`invalid schema at ${where}: expected an object, got ${describe(schema)}`);
+  }
+  const s = schema as Record<string, unknown>;
+
+  if (s.type !== undefined && !VALID_TYPES.has(s.type as string)) {
+    throw new SchemaError(`invalid schema at ${where}: unknown type ${JSON.stringify(s.type)}`);
+  }
+  if (s.required !== undefined && !Array.isArray(s.required)) {
+    throw new SchemaError(`invalid schema at ${where}: "required" must be an array`);
+  }
+  if (s.enum !== undefined && !Array.isArray(s.enum)) {
+    throw new SchemaError(`invalid schema at ${where}: "enum" must be an array`);
+  }
+  if (s.additionalProperties !== undefined && typeof s.additionalProperties !== "boolean") {
+    throw new SchemaError(`invalid schema at ${where}: "additionalProperties" must be a boolean`);
+  }
+  if (s.properties !== undefined) {
+    if (!isPlainObject(s.properties)) {
+      throw new SchemaError(`invalid schema at ${where}: "properties" must be an object`);
+    }
+    for (const [key, sub] of Object.entries(s.properties)) {
+      assertSchema(sub, `${where}.properties.${key}`);
+    }
+  }
+  if (s.items !== undefined) {
+    assertSchema(s.items, `${where}.items`);
+  }
+}
+
+function describe(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
 
 /* ---- JSON repair / extract ---- */
 
@@ -76,6 +156,11 @@ export function repairJson(raw: string): string {
 /**
  * Best-effort parse: tries strict `JSON.parse`, then extracts JSON from
  * surrounding text, then applies repairs. Returns `null` if all fail.
+ *
+ * This is a deliberately lenient *probe* — it reports "no JSON here" as `null`
+ * so callers can branch on it. The throwing contract lives in
+ * `parseAndValidate`, where a non-string or unrecoverable argument payload is a
+ * genuine usage error.
  */
 export function parseJsonLoose(input: string): unknown | null {
   if (typeof input !== "string" || !input) return null;
@@ -170,14 +255,20 @@ function validateInner(value: unknown, schema: Schema, path: string, errors: Val
 }
 
 /**
- * Validate a parsed value against a JSON-Schema-subset.
+ * Validate a parsed tool-call argument value against a JSON-Schema-subset.
  *
  * Supports: type, properties, required, items, enum, minimum, maximum,
  * minLength, maxLength, pattern, additionalProperties:false.
  *
  * Not supported: oneOf/anyOf/allOf, $ref, format, custom keywords.
+ *
+ * Returns a *verdict*: `{ valid: true, value }` for a conforming call, or
+ * `{ valid: false, errors }` (path-tagged) for a non-conforming one — a failed
+ * verdict is the correct, expected result, never an exception. By contrast a
+ * **malformed schema** is a usage error and throws `SchemaError`.
  */
 export function validate<T = unknown>(value: unknown, schema: Schema): ValidationResult<T> {
+  assertSchema(schema, "<root>");
   const errors: ValidationError[] = [];
   validateInner(value, schema, "", errors);
   if (errors.length) return { valid: false, errors };
@@ -185,13 +276,25 @@ export function validate<T = unknown>(value: unknown, schema: Schema): Validatio
 }
 
 /**
- * Parse a (possibly malformed) JSON tool-call payload and validate it
+ * Parse a (possibly malformed) JSON tool-call argument string and validate it
  * against `schema`. Combines `parseJsonLoose` + `validate`.
+ *
+ * Throws `SchemaError` when:
+ *  - `schema` is malformed (delegated to `validate`),
+ *  - `input` is not a string (the argument payload must be a JSON string),
+ *  - `input` cannot be parsed as JSON even after lenient repair.
+ *
+ * It returns a `{ valid: false, errors }` verdict only when the input *parses*
+ * but does not conform to the schema — never to report a parse failure.
  */
 export function parseAndValidate<T = unknown>(input: string, schema: Schema): ValidationResult<T> {
+  assertSchema(schema, "<root>");
+  if (typeof input !== "string") {
+    throw new SchemaError(`expected a JSON string argument payload, got ${describe(input)}`);
+  }
   const parsed = parseJsonLoose(input);
   if (parsed === null) {
-    return { valid: false, errors: [{ path: "", message: "could not parse JSON" }] };
+    throw new SchemaError("could not parse tool-call arguments as JSON");
   }
   return validate<T>(parsed, schema);
 }
